@@ -15,7 +15,7 @@ from workflow import process_patient
 
 
 st.set_page_config(
-    page_title="Hospital Flow Agent",
+    page_title="Agentic AI for Autonomous Hospital Flow and Resource Management",
     page_icon="🏥",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -25,7 +25,7 @@ initialize_database()
 
 # ---------------- PAGE HEADER ----------------
 
-st.title("🏥 Hospital Flow Agent")
+st.title("🏥 Agentic AI for Autonomous Hospital Flow and Resource Management")
 st.caption(
     "AI-Powered Hospital Management and Patient Flow "
     "| University Project Prototype"
@@ -138,6 +138,77 @@ if page == "Dashboard":
     st.caption(
         "All patient and resource figures are demonstration data."
     )
+    
+    # ---------------- AI OPERATIONS SUMMARY ----------------
+
+    st.divider()
+    st.header("🤖 AI Hospital Operations Summary")
+
+    st.write(
+        "Use the Agentic AI workflow to analyze the simulated "
+        "patient queue and hospital resources."
+    )
+
+    if patients:
+        patient_options = {
+            f"{p['patient_code']} — {p['status']}": p
+            for p in patients
+        }
+
+        selected_patient_label = st.selectbox(
+            "Select a demo patient for analysis",
+            list(patient_options.keys()),
+            key="dashboard_ai_patient",
+        )
+
+        selected_patient = patient_options[selected_patient_label]
+
+        if st.button(
+            "Generate AI Operations Summary",
+            type="primary",
+            key="dashboard_generate_ai",
+        ):
+            try:
+                with st.spinner(
+                    "Running LangGraph, MCP, A2A and local Ollama..."
+                ):
+                    result = process_patient(
+                        selected_patient["patient_code"],
+                        int(selected_patient["age"]),
+                        selected_patient["symptoms"],
+                    )
+
+                st.session_state["dashboard_ai_result"] = result
+
+            except Exception as error:
+                st.error(f"AI workflow failed: {error}")
+
+        ai_result = st.session_state.get("dashboard_ai_result")
+
+        if ai_result:
+            st.subheader("AI-Generated Summary")
+            st.markdown(
+                ai_result.get(
+                    "ai_summary",
+                    "No AI summary was returned by the workflow.",
+                )
+            )
+
+            with st.expander("View MCP data"):
+                st.code(ai_result.get("mcp_summary", "No MCP data"))
+
+            with st.expander("View A2A response"):
+                st.code(ai_result.get("a2a_summary", "No A2A response"))
+
+            with st.expander("View complete workflow report"):
+                st.code(ai_result.get("final_report", "No final report"))
+
+    else:
+        st.info(
+            "Register a demonstration patient first to generate "
+            "an AI operations summary."
+        )
+
 
 
 # ---------------- PATIENT REGISTRATION ----------------
@@ -191,9 +262,20 @@ elif page == "Register Patient":
                     result["priority"],
                 )
 
+                
                 st.success("Demo patient registered successfully!")
-                st.subheader("Workflow Report")
-                st.code(result["final_report"])
+
+                st.subheader("🤖 AI Operations Summary")
+                st.markdown(
+                    result.get(
+                        "ai_summary",
+                        "No AI summary was returned.",
+                    )
+                )
+
+                with st.expander("Complete Workflow Report"):
+                    st.code(result["final_report"])
+
 
             except Exception as error:
                 if "UNIQUE constraint failed" in str(error):
@@ -368,14 +450,41 @@ elif page == "Agent Workflow":
 
                 b.metric(
                     "Workflow Nodes",
-                    3,
+                    6,
                 )
 
-                st.subheader("Resource Summary")
+                
+                st.subheader("Hospital Resource Summary")
                 st.write(result["resource_summary"])
 
-                st.subheader("Final Report")
-                st.code(result["final_report"])
+                st.divider()
+                st.subheader("🤖 Ollama AI Operations Summary")
+
+                st.markdown(
+                    result.get(
+                        "ai_summary",
+                        "No AI summary was returned.",
+                    )
+                )
+
+                with st.expander("MCP — Resources and Patient Queue"):
+                    st.code(
+                        result.get("mcp_summary", "No MCP data returned.")
+                    )
+
+                with st.expander("A2A — Operations Agent Response"):
+                    st.code(
+                        result.get("a2a_summary", "No A2A response returned.")
+                    )
+
+                with st.expander("Complete Final Workflow Report"):
+                    st.code(result["final_report"])
+
+                st.caption(
+                    "This is an educational demonstration. "
+                    "AI-generated summaries are not clinical advice."
+                )
+
 
             except Exception:
                 st.error(
@@ -401,17 +510,28 @@ elif page == "About Project":
     - Demonstrate a LangGraph-based workflow.
     - Display information through a web dashboard.
 
+    
     ### Technologies
     - Python
-    - Streamlit
-    - SQLite
-    - Pandas
-    - LangGraph
+    - Streamlit — interactive hospital dashboard
+    - SQLite — local demonstration database
+    - Pandas — tabular data and charts
+    - LangGraph — workflow orchestration
+    - MCP — resource and patient-queue tools
+    - A2A — communication with the Hospital Operations Agent
+    - Ollama — local AI-generated summaries
+    - LangChain ecosystem — local AI integration where configured
 
-    ### Workflow
-    Patient Intake → Resource Monitoring → Coordinator → Report
+    ### Agentic AI Workflow
+    1. Patient Intake: processes demonstration patient information.
+    2. Resource Monitor: reads the simulated hospital inventory.
+    3. MCP Monitor: retrieves resource and patient-queue data.
+    4. A2A Operations Agent: requests an operations response.
+    5. Ollama AI Summary: generates a natural-language summary locally.
+    6. Coordinator: combines the workflow outputs into a final report.
 
     ### Limitations
-    This is an academic prototype using demonstration rules and
-    data. It is not a medical diagnosis or clinical triage system.
+    This is an academic prototype using simulated data and
+    demonstration rules. AI-generated summaries may be incorrect.
+    It does not provide medical diagnosis or validated clinical triage.
     """)
