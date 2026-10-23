@@ -2,6 +2,7 @@
 import pandas as pd
 import streamlit as st
 
+
 from database import (
     initialize_database,
     add_patient,
@@ -10,8 +11,26 @@ from database import (
     update_resource,
     update_patient_status,
     delete_patient,
+    get_departments,
+    get_beds,
+    recommend_bed,
+    assign_bed,
+    recommend_department,
+    discharge_patient,
+    get_discharges,
+    request_transfer,
+    get_transfers,
+    update_transfer_status,
+    get_notifications,
+    mark_notification_read,
+    refresh_resource_alerts,
+)
+from bed_allocation_agent import (
+    recommend_bed_for_patient,
+    confirm_bed_assignment,
 )
 from workflow import process_patient
+
 
 
 st.set_page_config(
@@ -39,6 +58,7 @@ st.warning(
 
 # ---------------- NAVIGATION ----------------
 
+
 page = st.sidebar.radio(
     "Navigation",
     [
@@ -46,10 +66,15 @@ page = st.sidebar.radio(
         "Register Patient",
         "Patient Queue",
         "Resource Management",
+        "Bed Allocation",
+        "Department Routing",
+        "Discharge & Transfers",
+        "Notifications",
         "Agent Workflow",
         "About Project",
     ],
 )
+
 
 st.sidebar.divider()
 st.sidebar.caption("Hospital Flow Agent | Student Project")
@@ -492,6 +517,276 @@ elif page == "Agent Workflow":
                     "for the technical error."
                 )
 
+
+# ---------------- BED ALLOCATION ----------------
+
+elif page == "Bed Allocation":
+    st.header("🛏️ Bed Allocation Agent")
+    st.caption(
+        "Recommendations use demonstration inventory. "
+        "Confirm assignments only after appropriate staff review."
+    )
+
+    patients = get_patients()
+    departments = get_departments()
+
+    if not patients:
+        st.info("Register a demo patient first.")
+    else:
+        patient_map = {
+            p["patient_code"]: p
+            for p in patients
+            if p["status"] not in ("Completed", "Transferred", "Discharged")
+        }
+
+        if not patient_map:
+            st.info("No active demo patients are available.")
+        else:
+            patient_code = st.selectbox(
+                "Select patient",
+                list(patient_map.keys()),
+                key="bed_patient",
+            )
+
+            department_names = [d["name"] for d in departments]
+            department = st.selectbox(
+                "Preferred department",
+                department_names,
+                key="bed_department",
+            )
+
+            bed_type = st.selectbox(
+                "Bed type",
+                ["General", "Private", "ICU"],
+                key="bed_type",
+            )
+
+            if st.button("Recommend Available Bed", type="primary"):
+                result = recommend_bed_for_patient(
+                    patient_code,
+                    department,
+                    bed_type,
+                )
+                st.session_state["bed_recommendation"] = result
+
+            result = st.session_state.get("bed_recommendation")
+
+            if result and result.get("success"):
+                recommendation = result["recommendation"]
+
+                if recommendation["patient_code"] == patient_code:
+                    st.success(result["message"])
+                    st.json(recommendation)
+
+                    confirm = st.checkbox(
+                        "I confirm this demo assignment has been reviewed.",
+                        key="confirm_bed_assignment",
+                    )
+
+                    if st.button("Confirm Bed Assignment"):
+                        if not confirm:
+                            st.warning("Confirm the review checkbox first.")
+                        else:
+                            try:
+                                confirm_bed_assignment(
+                                    patient_code,
+                                    recommendation["bed_code"],
+                                )
+                                st.session_state.pop(
+                                    "bed_recommendation", None
+                                )
+                                st.success("Bed assignment recorded.")
+                                st.rerun()
+                            except (ValueError, Exception) as error:
+                                st.error(f"Assignment failed: {error}")
+                else:
+                    st.info("Generate a new recommendation for this patient.")
+            elif result:
+                st.warning(result["message"])
+
+    st.subheader("Individual Bed Inventory")
+    st.dataframe(get_beds(), use_container_width=True, hide_index=True)
+
+
+# ---------------- DEPARTMENT ROUTING ----------------
+
+elif page == "Department Routing":
+    st.header("🧭 Department Routing")
+    st.caption(
+        "Keyword-based educational suggestions only; "
+        "not a medical assessment."
+    )
+
+    symptoms = st.text_area(
+        "Enter simulated request text",
+        placeholder="Example: routine consultation",
+    )
+
+    if st.button("Suggest Department", type="primary"):
+        if not symptoms.strip():
+            st.warning("Enter demo text first.")
+        else:
+            result = recommend_department(symptoms)
+            st.session_state["department_result"] = result
+
+    result = st.session_state.get("department_result")
+    if result:
+        st.info(f"Suggested department: {result['department']}")
+        st.write(f"Reason: {result['reason']}")
+        st.warning("Staff review is required before acting on this suggestion.")
+
+    st.subheader("Configured Departments")
+    st.dataframe(get_departments(), use_container_width=True, hide_index=True)
+
+
+# ---------------- DISCHARGE AND TRANSFERS ----------------
+
+elif page == "Discharge & Transfers":
+    st.header("🚪 Discharge & Transfers")
+    patients = get_patients()
+
+    active_patients = [
+        p for p in patients
+        if p["status"] not in ("Completed", "Transferred", "Discharged")
+    ]
+
+    if not active_patients:
+        st.info("No active demo patient records are available.")
+    else:
+        patient_codes = [p["patient_code"] for p in active_patients]
+        selected_patient = st.selectbox(
+            "Select patient",
+            patient_codes,
+            key="discharge_transfer_patient",
+        )
+
+        st.subheader("Record Discharge")
+        discharge_reason = st.text_input(
+            "Discharge reason (demo)",
+            key="discharge_reason",
+        )
+
+        discharge_confirm = st.checkbox(
+            "Confirm this simulated discharge has been reviewed.",
+            key="discharge_confirm",
+        )
+
+        if st.button("Record Discharge"):
+            if not discharge_confirm:
+                st.warning("Confirm the review checkbox first.")
+            else:
+                try:
+                    discharge_patient(selected_patient, discharge_reason)
+                    st.success("Discharge recorded.")
+                    st.rerun()
+                except ValueError as error:
+                    st.error(str(error))
+
+        st.divider()
+        st.subheader("Request Department Transfer")
+
+        departments = [
+            d["name"] for d in get_departments()
+        ]
+
+        destination = st.selectbox(
+            "Destination department",
+            departments,
+            key="transfer_destination",
+        )
+        transfer_reason = st.text_input(
+            "Transfer reason (demo)",
+            key="transfer_reason",
+        )
+
+        if st.button("Submit Transfer Request"):
+            try:
+                transfer_id = request_transfer(
+                    selected_patient,
+                    destination,
+                    transfer_reason,
+                )
+                st.success(f"Transfer request #{transfer_id} recorded.")
+                st.rerun()
+            except ValueError as error:
+                st.error(str(error))
+
+    st.subheader("Transfer Requests")
+
+    transfers = get_transfers()
+    if transfers:
+        st.dataframe(transfers, use_container_width=True, hide_index=True)
+
+        pending = [
+            t for t in transfers
+            if t["status"] in ("Requested", "Approved")
+        ]
+
+        if pending:
+            transfer_ids = [t["id"] for t in pending]
+            selected_transfer = st.selectbox(
+                "Select transfer request",
+                transfer_ids,
+            )
+            transfer_status = st.selectbox(
+                "Update transfer status",
+                ["Approved", "Completed", "Cancelled"],
+            )
+
+            if st.button("Update Transfer"):
+                try:
+                    update_transfer_status(
+                        selected_transfer,
+                        transfer_status,
+                    )
+                    st.success("Transfer status updated.")
+                    st.rerun()
+                except ValueError as error:
+                    st.error(str(error))
+    else:
+        st.info("No transfer requests yet.")
+
+    st.subheader("Discharge History")
+    st.dataframe(
+        get_discharges(),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+
+# ---------------- NOTIFICATIONS ----------------
+
+elif page == "Notifications":
+    st.header("🔔 Hospital Notifications")
+
+    if st.button("Check Resource Levels"):
+        alerts = refresh_resource_alerts()
+        if alerts:
+            st.warning(f"{len(alerts)} low-resource alert(s) created.")
+        else:
+            st.success("No resources are below the configured threshold.")
+
+    notifications = get_notifications()
+
+    if notifications:
+        for notification in notifications:
+            with st.container(border=True):
+                st.write(
+                    f"**{notification['severity']} — "
+                    f"{notification['category']}**"
+                )
+                st.write(notification["message"])
+                st.caption(str(notification["created_at"]))
+
+                if not notification["is_read"]:
+                    if st.button(
+                        "Mark as read",
+                        key=f"read_notification_{notification['id']}",
+                    ):
+                        mark_notification_read(notification["id"])
+                        st.rerun()
+    else:
+        st.info("No notifications have been generated.")
 
 # ---------------- ABOUT ----------------
 
