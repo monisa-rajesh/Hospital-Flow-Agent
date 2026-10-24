@@ -17,7 +17,8 @@ def generate_operations_summary(resource_data, patient_data):
 
     # Replace this with a model name from `ollama list`.
     model = ChatOllama(
-        model="qwen3:4b",
+        model="qwen3:1.7b",
+        base_url="http://127.0.0.1:11434",
         temperature=0
     )
 
