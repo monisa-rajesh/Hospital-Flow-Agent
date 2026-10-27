@@ -300,6 +300,7 @@ def add_department(name, description):
         """, (name.strip(), description.strip()))
 
 
+
 def recommend_department(symptoms):
     """
     Demonstration keyword routing only.
@@ -308,17 +309,40 @@ def recommend_department(symptoms):
     text = symptoms.lower()
 
     rules = [
-        (["heart", "chest", "cardiac"], "Cardiology"),
-        (["bone", "joint", "fracture"], "Orthopedics"),
-        (["nerve", "seizure", "headache"], "Neurology"),
-        (["emergency", "urgent"], "Emergency"),
+        (
+            ["heart", "chest", "cardiac"],
+            "Cardiology",
+        ),
+        (
+            ["bone", "joint", "fracture"],
+            "Orthopedics",
+        ),
+        (
+            [
+                "nerve",
+                "nerves",
+                "nervous system",
+                "neurology",
+                "neurological",
+                "brain",
+                "seizure",
+                "headache",
+                "migraine",
+            ],
+            "Neurology",
+        ),
+        (
+            ["emergency", "accident","urgent"],
+            "Emergency",
+        ),
     ]
 
     for keywords, department in rules:
         if any(word in text for word in keywords):
             return {
                 "department": department,
-                "reason": "Matched a demonstration keyword rule.",
+                "reason": "Matched demonstration keywords for "
+                          + department + ".",
                 "requires_staff_review": True,
             }
 

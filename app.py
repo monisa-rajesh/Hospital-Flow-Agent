@@ -1,6 +1,8 @@
 
 import pandas as pd
 import streamlit as st
+import uuid
+from langgraph.types import Command
 
 
 from database import (
@@ -30,6 +32,7 @@ from bed_allocation_agent import (
     confirm_bed_assignment,
 )
 from workflow import process_patient
+from bed_workflow import bed_workflow
 
 
 
@@ -372,6 +375,7 @@ elif page == "Patient Queue":
 
 # ---------------- RESOURCE MANAGEMENT ----------------
 
+
 elif page == "Resource Management":
     st.header("🛏️ Resource Management")
     st.write("Update the simulated hospital resource inventory.")
@@ -379,6 +383,10 @@ elif page == "Resource Management":
     resources = get_resources()
 
     for resource in resources:
+        # Beds must be managed individually
+        if resource["name"] == "Beds":
+            continue
+
         with st.expander(resource["name"]):
             with st.form(f"resource_form_{resource['name']}"):
                 total = st.number_input(
@@ -412,12 +420,41 @@ elif page == "Resource Management":
                 st.success("Resource counts saved.")
                 st.rerun()
 
+    # Bed inventory section — outside the loop
+    st.subheader("Bed Management")
+
+    beds = get_beds()
+
+    st.dataframe(
+        pd.DataFrame(beds),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    resources = get_resources()
+    bed_resource = next(
+        (r for r in resources if r["name"] == "Beds"),
+        None,
+    )
+
+    if bed_resource:
+        st.metric(
+            "Available Beds",
+            f"{bed_resource['available']} / {bed_resource['total']}",
+        )
+
+    st.info(
+        "Manage individual beds through the Bed Allocation page. "
+        "Bed counts are synchronized automatically."
+    )
+
     st.subheader("Current Resource Summary")
     st.dataframe(
         pd.DataFrame(get_resources()),
         use_container_width=True,
         hide_index=True,
     )
+
 
 
 # ---------------- AGENT WORKFLOW ----------------
@@ -520,92 +557,192 @@ elif page == "Agent Workflow":
 
 # ---------------- BED ALLOCATION ----------------
 
+
 elif page == "Bed Allocation":
     st.header("🛏️ Bed Allocation Agent")
-    st.caption(
-        "Recommendations use demonstration inventory. "
-        "Confirm assignments only after appropriate staff review."
+    st.write(
+        "Find a matching available bed and assign it "
+        "after staff confirmation."
     )
 
-    patients = get_patients()
+    patients = [
+        p for p in get_patients()
+        if p["status"] not in (
+            "Completed",
+            "Transferred",
+            "Discharged",
+        )
+    ]
+
     departments = get_departments()
+    beds = get_beds()
 
     if not patients:
-        st.info("Register a demo patient first.")
+        st.info("Register a demonstration patient first.")
+    elif not departments:
+        st.warning("No active departments are configured.")
     else:
-        patient_map = {
-            p["patient_code"]: p
-            for p in patients
-            if p["status"] not in ("Completed", "Transferred", "Discharged")
+        patient_options = {
+            p["patient_code"]: p for p in patients
         }
 
-        if not patient_map:
-            st.info("No active demo patients are available.")
-        else:
-            patient_code = st.selectbox(
-                "Select patient",
-                list(patient_map.keys()),
-                key="bed_patient",
+        selected_patient_code = st.selectbox(
+            "Select patient",
+            list(patient_options.keys()),
+            key="booking_patient",
+        )
+
+        department_names = [
+            d["name"] for d in departments
+        ]
+
+        selected_department = st.selectbox(
+            "Department",
+            department_names,
+            key="booking_department",
+        )
+
+        bed_type = st.selectbox(
+            "Bed type",
+            ["General", "Private", "ICU"],
+            key="booking_bed_type",
+        )
+
+        if st.button(
+            "Find Available Bed",
+            type="primary",
+            key="find_booking_bed",
+        ):
+            result = recommend_bed_for_patient(
+                patient_code=selected_patient_code,
+                department=selected_department,
+                bed_type=bed_type,
             )
 
-            department_names = [d["name"] for d in departments]
-            department = st.selectbox(
-                "Preferred department",
-                department_names,
-                key="bed_department",
+            st.session_state["bed_recommendation"] = (
+                result if result["success"] else None
+            )
+            st.session_state["bed_recommendation_message"] = (
+                result["message"]
+            )
+            st.session_state["bed_recommendation_patient"] = (
+                selected_patient_code
             )
 
-            bed_type = st.selectbox(
-                "Bed type",
-                ["General", "Private", "ICU"],
-                key="bed_type",
-            )
+        recommendation = st.session_state.get(
+            "bed_recommendation"
+        )
+        message = st.session_state.get(
+            "bed_recommendation_message"
+        )
 
-            if st.button("Recommend Available Bed", type="primary"):
-                result = recommend_bed_for_patient(
-                    patient_code,
-                    department,
-                    bed_type,
+        if message:
+            if recommendation:
+                st.success(message)
+
+                bed = recommendation["recommendation"]
+
+                st.write("**Recommended bed details**")
+                st.write(f"Bed code: {bed['bed_code']}")
+                st.write(f"Department: {bed['department']}")
+                st.write(f"Bed type: {bed['bed_type']}")
+
+                st.warning(
+                    "Confirm only after the responsible staff "
+                    "member has reviewed the proposed assignment."
                 )
-                st.session_state["bed_recommendation"] = result
 
-            result = st.session_state.get("bed_recommendation")
+                confirmed = st.checkbox(
+                    "I confirm this simulated bed assignment "
+                    "after staff review.",
+                    key="confirm_booking",
+                )
 
-            if result and result.get("success"):
-                recommendation = result["recommendation"]
+                if st.button(
+                    "Confirm and Assign Bed",
+                    type="primary",
+                    key="confirm_booking_button",
+                    disabled=not confirmed,
+                ):
+                    try:
+                        # Re-check the bed immediately before assignment.
+                        current_beds = get_beds()
+                        current_bed = next(
+                            (
+                                b for b in current_beds
+                                if b["bed_code"] == bed["bed_code"]
+                            ),
+                            None,
+                        )
 
-                if recommendation["patient_code"] == patient_code:
-                    st.success(result["message"])
-                    st.json(recommendation)
-
-                    confirm = st.checkbox(
-                        "I confirm this demo assignment has been reviewed.",
-                        key="confirm_bed_assignment",
-                    )
-
-                    if st.button("Confirm Bed Assignment"):
-                        if not confirm:
-                            st.warning("Confirm the review checkbox first.")
+                        if (
+                            not current_bed
+                            or current_bed["status"] != "Available"
+                            or current_bed["department"]
+                            != selected_department
+                            or current_bed["bed_type"] != bed_type
+                        ):
+                            st.error(
+                                "This bed is no longer available "
+                                "or no longer matches. Find another bed."
+                            )
+                            st.session_state[
+                                "bed_recommendation"
+                            ] = None
                         else:
-                            try:
-                                confirm_bed_assignment(
-                                    patient_code,
-                                    recommendation["bed_code"],
-                                )
-                                st.session_state.pop(
-                                    "bed_recommendation", None
-                                )
-                                st.success("Bed assignment recorded.")
-                                st.rerun()
-                            except (ValueError, Exception) as error:
-                                st.error(f"Assignment failed: {error}")
-                else:
-                    st.info("Generate a new recommendation for this patient.")
-            elif result:
-                st.warning(result["message"])
+                            confirm_bed_assignment(
+                                selected_patient_code,
+                                bed["bed_code"],
+                            )
 
-    st.subheader("Individual Bed Inventory")
-    st.dataframe(get_beds(), use_container_width=True, hide_index=True)
+                            # Verify the saved database state.
+                            verified_beds = get_beds()
+                            assigned_bed = next(
+                                (
+                                    b for b in verified_beds
+                                    if b["bed_code"] == bed["bed_code"]
+                                ),
+                                None,
+                            )
+
+                            if (
+                                assigned_bed
+                                and assigned_bed["status"] == "Occupied"
+                                and assigned_bed["patient_code"]
+                                == selected_patient_code
+                            ):
+                                st.session_state[
+                                    "bed_recommendation"
+                                ] = None
+                                st.session_state[
+                                    "bed_recommendation_message"
+                                ] = None
+                                st.success(
+                                    f"Bed {bed['bed_code']} assigned "
+                                    f"to {selected_patient_code} "
+                                    "and verified successfully."
+                                )
+                                st.rerun()
+                            else:
+                                st.error(
+                                    "Assignment could not be verified. "
+                                    "Check the bed inventory before retrying."
+                                )
+
+                    except Exception as error:
+                        st.error(f"Bed assignment failed: {error}")
+
+            else:
+                st.warning(message)
+
+    st.divider()
+    st.subheader("Current Bed Inventory")
+
+    st.dataframe(
+        get_beds(),
+        use_container_width=True,
+        hide_index=True,
+    )
 
 
 # ---------------- DEPARTMENT ROUTING ----------------

@@ -1,5 +1,34 @@
 
-from langchain_ollama import ChatOllama
+import os
+import streamlit as st
+from dotenv import load_dotenv
+from langchain_google_genai import ChatGoogleGenerativeAI
+
+load_dotenv()
+
+
+def get_cloud_model():
+    api_key = os.getenv("GOOGLE_API_KEY")
+
+    if not api_key:
+        try:
+            api_key = st.secrets.get("GOOGLE_API_KEY")
+        except Exception:
+            api_key = None
+
+    if not api_key:
+        raise ValueError("GOOGLE_API_KEY is missing.")
+
+    model_name = os.getenv(
+        "GOOGLE_MODEL",
+        "gemini-3.5-flash-lite",
+    )
+
+    return ChatGoogleGenerativeAI(
+        model=model_name,
+        google_api_key=api_key,
+        temperature=0,
+    )
 
 
 def generate_operations_summary(resource_data, patient_data):
@@ -15,31 +44,33 @@ def generate_operations_summary(resource_data, patient_data):
         for p in patient_data
     )
 
-    # Replace this with a model name from `ollama list`.
-    model = ChatOllama(
-        model="qwen3:1.7b",
-        base_url="http://127.0.0.1:11434",
-        temperature=0
-    )
-
     prompt = f"""
-    You are an operations assistant for an educational
-    hospital management simulation.
+You are an administrative assistant for a simulated hospital.
 
-    Resource inventory:
-    {resources_text}
+Resource availability:
+{resources_text}
 
-    Total simulated patients: {total_patients}
-    Waiting patients: {waiting_patients}
+Total patients in the supplied data: {total_patients}
+Patients currently waiting: {waiting_patients}
 
-    Write a short administrative report describing
-    resource availability and inventory figures that
-    may need review.
+Patient data:
+{patient_data}
 
-    Do not diagnose patients, recommend treatment,
-    or make clinical decisions. Do not invent data.
-    Clearly state that this is a simulation.
-    """
+Write a concise operations summary covering resource availability,
+the waiting queue, and administrative observations.
 
-    response = model.invoke(prompt)
-    return response.content
+Use only the supplied data. Do not invent information.
+Do not diagnose patients or recommend treatment.
+This is an educational simulation, not a clinical decision system.
+"""
+
+    try:
+        response = get_cloud_model().invoke(prompt)
+        return response.content
+
+    except Exception as error:
+        return (
+            "Cloud AI operations summary is unavailable. "
+            f"Please check the API key, model access, and quota. "
+            f"Details: {error}"
+        )
